@@ -28,7 +28,7 @@ vim.diagnostic.config({
 -- documentSymbol came back at ~19s with csharp-ls against ~4s with roslyn_ls,
 -- because csharp-ls does a cold MSBuild solution load on every attach.
 --
--- Nothing is overridden below: the lspconfig spec already roots at the nearest
+-- Rooting is not overridden: the lspconfig spec already roots at the nearest
 -- .sln/.slnx (falling back to .csproj) and opens it via the `solution/open`
 -- notification, so cross-project go-to-definition works without the root_dir
 -- predicate csharp-ls needed here.
@@ -37,8 +37,47 @@ vim.diagnostic.config({
 -- It comes from the dotnet tool feed and lands in ~/.dotnet/tools (which
 -- .bash_profile puts on PATH):
 --     dotnet tool install --global roslyn-language-server --prerelease
+--
+-- One addition to that spec: Roslyn resolves package references from
+-- obj/project.assets.json, not from the .csproj, and when that file is missing
+-- or stale it can ask the client to run the restore for it. Neovim ships two
+-- copies of the lspconfig spec — the vim.pack one in site/pack/core/opt wins on
+-- the runtimepath, and it is the one WITHOUT that handler, so the request would
+-- be answered with MethodNotFound.
+--
+-- Measured on server 5.12.0: opening a project whose obj/ had been deleted did
+-- NOT produce this request — the server just reported CS0103 on every framework
+-- and package type and moved on, so a cold missing restore still has to be
+-- fixed with `dotnet restore` by hand. The handler is insurance for the paths
+-- that do send it (adding a PackageReference to a live session), not a fix for
+-- that case.
+vim.lsp.config("roslyn_ls", {
+    handlers = {
+        ["workspace/_roslyn_projectNeedsRestore"] = function(_, result, ctx)
+            local client = assert(vim.lsp.get_client_by_id(ctx.client_id))
 
--- lua_ls: teach it the Neovim runtime so editing this config resolves `vim`.
+            client:request("workspace/_roslyn_restore", result, function(err, response)
+                if err then
+                    vim.notify(err.message, vim.log.levels.ERROR, { title = "roslyn_ls" })
+                end
+                for _, v in ipairs(response or {}) do
+                    vim.notify(v.message, vim.log.levels.INFO, { title = "roslyn_ls" })
+                end
+            end)
+
+            -- vim.NIL answers the request with null; returning nothing makes the
+            -- client reply with an error and the server abandons the restore.
+            return vim.NIL
+        end,
+    },
+})
+
+-- csharp|navigation.dotnet_navigate_to_decompiled_sources is deliberately NOT
+-- set: 5.12.0 returns a decompiled buffer under $TMPDIR/MetadataAsSource for a
+-- type coming from a package either way. Verified by asking for the definition
+-- of DbContext (Microsoft.EntityFrameworkCore) in ApiConverter with the option
+-- forced to false — same MetadataAsSource URI came back.
+
 vim.lsp.config("lua_ls", {
     settings = {
         Lua = {
