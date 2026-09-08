@@ -25,6 +25,7 @@ vim.pack.add({
     { src = gh("rachartier/tiny-inline-diagnostic.nvim") },
     { src = gh("akinsho/bufferline.nvim") },
     { src = gh("nvim-lualine/lualine.nvim") },
+    { src = gh("b0o/incline.nvim") },
 
     -- Editor / navigation
     { src = gh("stevearc/oil.nvim") },
