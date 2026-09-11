@@ -48,6 +48,33 @@ function M.start_dir()
     return vim.fn.getcwd()
 end
 
+--- The file an action on "this file" means: the entry under the cursor in an
+--- oil buffer, otherwise the current buffer's own file.
+---
+--- oil gets the same special case as in start_dir: its buffer is a directory,
+--- and the file the user is pointing at is the line the cursor is on.
+---
+--- @return string|nil absolute path of an existing file
+function M.current_file()
+    local path
+
+    if vim.api.nvim_buf_get_name(0):match("^oil://") then
+        local ok, oil = pcall(require, "oil")
+        local entry = ok and oil.get_cursor_entry()
+        local dir = ok and oil.get_current_dir()
+        if entry and dir and entry.type == "file" then
+            path = vim.fs.joinpath(dir, entry.name)
+        end
+    elseif vim.bo.buftype == "" then
+        path = vim.api.nvim_buf_get_name(0)
+    end
+
+    if path and path ~= "" and vim.fn.filereadable(path) == 1 then
+        return vim.fs.normalize(path)
+    end
+    return nil
+end
+
 --- Every solution file in the NEAREST ancestor directory that holds one.
 --- Usually a single entry — but `dotnet new sln -f sln` next to an existing
 --- .slnx leaves two side by side, and silently picking one would be wrong.

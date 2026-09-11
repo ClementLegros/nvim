@@ -27,7 +27,10 @@ lua/dotnet/                  Menu .NET (module local, pas un plugin vim.pack)
   solution.lua               Ce que la solution contient (dotnet sln list)
   project.lua                Graphe des références projet-à-projet
   templates.lua              Catalogue `dotnet new`
-  actions.lua                Les six actions du menu
+  roslyn.lua                 Attente du chargement de la solution par roslyn_ls
+  csharp.lua                 Squelette de fichier, renommage de type (partagés)
+  actions.lua                Les sept actions du menu
+  oil.lua                    Les mêmes actions, déclenchées depuis oil
 ```
 
 ## Gestion des plugins
@@ -83,13 +86,15 @@ Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
 | `p` | Nouveau projet — 7 templates courants + le catalogue complet |
 | `a` | Ajouter au `.sln` les projets présents sur disque mais absents |
 | `f` | Nouveau fichier — class / interface / record / enum / struct |
+| `R` | Renommer le fichier `.cs` courant — et le type qu'il déclare, partout |
 | `r` | Référence projet-à-projet |
 | `n` | Package NuGet (recherche sur nuget.org) |
 
-Tout passe par la CLI `dotnet` : pas de serveur, pas de démon, pas d'analyse
-MSBuild. Les champs de saisie acceptent un **chemin** et pas seulement un nom —
-`src/Api` crée le projet `Api` sous `src/`, `Services/Billing/Invoice` crée les
-dossiers et y place `Invoice.cs`.
+Tout passe par la CLI `dotnet` — pas de démon, pas d'analyse MSBuild — sauf le
+renommage, qui passe par roslyn_ls (voir plus bas). Les champs de création
+acceptent un **chemin** et pas seulement un nom — `src/Api` crée le projet `Api`
+sous `src/`, `Services/Billing/Invoice` crée les dossiers et y place
+`Invoice.cs`.
 
 Deux endroits font mieux que la CLI, délibérément :
 
@@ -102,11 +107,48 @@ Deux endroits font mieux que la CLI, délibérément :
   Le menu n'affiche que les projets qui ne peuvent pas déjà atteindre la source,
   transitivement.
 
+### Renommer un fichier
+
+roslyn_ls ne réagit aux renommages de fichiers que pour les `*.razor` : un
+simple déplacement de `Foo.cs` laisserait la classe, et tout ce qui l'utilise,
+sous l'ancien nom. Le renommage (menu `R` ou oil) renomme donc d'abord le
+**type** via roslyn_ls (`textDocument/rename`, sur toute la solution),
+enregistre les fichiers modifiés, puis le fichier.
+
+- **Attente du chargement.** Avant d'avoir chargé la solution, roslyn_ls répond
+  quand même, mais avec le seul fichier courant — sans erreur (mesuré). Le
+  renommage attend donc `workspace/projectInitializationComplete`.
+- **Pas de type du même nom** (`Program.cs`, fichier à plusieurs types) : seul
+  le fichier est renommé, et le message le dit.
+- **Buffer avec des modifications en cours** : le renommage y est appliqué mais
+  le buffer n'est pas enregistré — il est nommé dans un avertissement.
+- **Un nom, pas un chemin.** Déplacer le fichier changerait son namespace, et
+  donc les `using` des fichiers qui l'utilisent : ce n'est pas géré.
+
+### Depuis oil, sans le menu
+
+Les opérations enregistrées dans oil (`:w`) déclenchent directement l'action
+correspondante, pour un `.cs` situé dans un projet. Le renommage et la
+suppression passent par roslyn_ls, et seulement s'il tourne déjà pour cette
+solution — aucun serveur n'est démarré pour l'occasion :
+
+| Dans oil | Effet |
+|----------|-------|
+| Créer `Invoice.cs` | Fichier vide rempli : namespace des dossiers + `public class Invoice` (`interface` pour `IInvoice…`) |
+| Renommer `Foo.cs` → `Bar.cs` | Type `Foo` renommé en `Bar` dans toute la solution, avant qu'oil ne déplace le fichier |
+| Supprimer `Foo.cs` | Avertissement si `Foo` est encore utilisé ailleurs ; le buffer du fichier supprimé est fermé |
+
+Branché sur les événements `OilActionsPre` / `OilActionsPost`. Un `.cs` hors de
+tout projet (ou un nom qui n'est pas un identifiant, `Invoice.Validation.cs`)
+est laissé tel quel. Déplacer un fichier dans un autre dossier sous le même nom
+ne touche à rien.
+
 Après chaque action, les buffers oil concernés sont réaffichés et les fichiers
 modifiés rechargés (`:checktime <bufnr>`, la forme globale ne touchant pas les
 buffers cachés).
 
-Dépendance externe : le SDK `dotnet` sur le PATH.
+Dépendances externes : le SDK `dotnet` sur le PATH, et roslyn_ls pour les
+renommages et la vérification avant suppression.
 
 ## Migration
 

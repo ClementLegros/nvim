@@ -3,8 +3,10 @@
 
 local cli = require("dotnet.cli")
 local context = require("dotnet.context")
+local csharp = require("dotnet.csharp")
 local menu = require("dotnet.menu")
 local project_graph = require("dotnet.project")
+local roslyn = require("dotnet.roslyn")
 local solution_api = require("dotnet.solution")
 local templates = require("dotnet.templates")
 
@@ -414,27 +416,6 @@ local KINDS = {
     { key = "s", keyword = "struct" },
 }
 
---- Build the file body, and say which line the cursor belongs on.
---- @return string[] lines, integer cursor_line
-local function scaffold(keyword, name, namespace)
-    local lines = {}
-
-    -- File-scoped, matching 69 of the 72 namespaced files in this codebase (the
-    -- three block-scoped ones are EF-generated migrations).
-    if namespace then
-        table.insert(lines, "namespace " .. namespace .. ";")
-        table.insert(lines, "")
-    end
-
-    table.insert(lines, "public " .. keyword .. " " .. name)
-    table.insert(lines, "{")
-    table.insert(lines, "")
-    table.insert(lines, "}")
-
-    -- The blank line between the braces: where you would start typing anyway.
-    return lines, #lines - 1
-end
-
 --- Ask for a name, work out the namespace, write the file, open it.
 local function create_file(keyword, base)
     local prompt = ("Nouveau %s dans %s : "):format(keyword, vim.fn.fnamemodify(base, ":~"))
@@ -482,7 +463,7 @@ local function create_file(keyword, base)
             )
         end
 
-        local lines, cursor = scaffold(keyword, name, namespace)
+        local lines, cursor = csharp.scaffold(keyword, name, namespace)
         local ok, err = pcall(vim.fn.writefile, lines, path)
         if not ok then
             vim.notify("Écriture impossible : " .. tostring(err), vim.log.levels.ERROR, { title = ".NET" })
@@ -520,6 +501,110 @@ function M.new_file()
     end
 
     menu.open({ title = "Nouveau fichier", items = items })
+end
+
+--- Rename the file on disk, keeping its buffer (and the LSP's view of it).
+---
+--- vim.lsp.util.rename does the delicate part: it moves the file, re-points
+--- every buffer showing it via `:saveas!`, and that write is what sends the
+--- server didClose on the old URI and didOpen on the new one. It reports its
+--- own refusals but returns nothing either way, so success is read off the disk.
+---
+--- @return boolean
+local function move_file(path, new_path)
+    local ok, err = pcall(vim.lsp.util.rename, path, new_path)
+    if not ok or not vim.uv.fs_stat(new_path) then
+        vim.notify(
+            ("Impossible de renommer %s : %s"):format(vim.fs.basename(path), tostring(err or "?")),
+            vim.log.levels.ERROR,
+            { title = ".NET" }
+        )
+        return false
+    end
+    refresh_oil(vim.fs.dirname(new_path))
+    return true
+end
+
+--- Rename the type through roslyn_ls, save what it edited, then the file.
+---
+--- The TYPE goes first, while the file still has its old name: the rename
+--- request is addressed to the document's URI, and moving the file first would
+--- mean asking the server about a path it has not caught up with yet.
+local function rename_type_and_file(client, bufnr, path, new_path, old, new)
+    local result, err = csharp.rename_type(client, bufnr, old, new)
+    if not result then
+        vim.notify(err, vim.log.levels.ERROR, { title = ".NET" })
+        return
+    end
+
+    if move_file(path, new_path) then
+        csharp.report_rename(old, new, result)
+    end
+end
+
+--- Rename a C# file, and the type named after it everywhere it is used.
+---
+--- The menu counterpart of renaming the file in oil (see oil.lua): both go
+--- through the server's own rename, which covers the whole solution.
+function M.rename_file()
+    local path = context.current_file()
+    if not path or not path:match("%.cs$") then
+        vim.notify(
+            "Renommer : ouvre un fichier .cs, ou place le curseur dessus dans oil",
+            vim.log.levels.WARN,
+            { title = ".NET" }
+        )
+        return
+    end
+
+    local old = vim.fs.basename(path):gsub("%.cs$", "")
+    local dir = vim.fs.dirname(path)
+
+    vim.ui.input({ prompt = ("Renommer %s.cs en : "):format(old), default = old }, function(input)
+        if not input then
+            return
+        end
+
+        local new = vim.trim(input):gsub("%.cs$", "")
+        if new == "" or new == old then
+            return
+        end
+
+        -- A name only. Moving to another folder would also change the
+        -- namespace, and with it the `using` of every file that refers to the
+        -- type — a different operation from this one.
+        if new:find("[/\\]") then
+            vim.notify(
+                "Un nom, pas un chemin : le renommage ne déplace pas le fichier",
+                vim.log.levels.ERROR,
+                { title = ".NET" }
+            )
+            return
+        end
+
+        -- Checked before anything is touched: finding the clash after the type
+        -- rename would leave the code renamed and the file not.
+        local new_path = vim.fs.joinpath(dir, new .. ".cs")
+        if vim.uv.fs_stat(new_path) then
+            vim.notify(new .. ".cs existe déjà", vim.log.levels.ERROR, { title = ".NET" })
+            return
+        end
+
+        -- Scheduled out of the vim.ui.input callback, like the menus above. From
+        -- oil the file is opened first: the server can only be asked about a
+        -- buffer it is attached to, and landing in the renamed file is where
+        -- the user would go next anyway.
+        vim.schedule(function()
+            local bufnr = vim.fn.bufadd(path)
+            if bufnr ~= vim.api.nvim_get_current_buf() then
+                vim.cmd.buffer(bufnr)
+            end
+
+            roslyn.when_ready(bufnr, function(client)
+                rename_type_and_file(client, bufnr, path, new_path, old, new)
+            end)
+        end)
+    end)
 end
 
 --- Run `cb` with the project an action applies to.
