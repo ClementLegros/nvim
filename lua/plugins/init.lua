@@ -34,6 +34,10 @@ vim.pack.add({
     { src = gh("kdheepak/lazygit.nvim") },
     { src = gh("folke/trouble.nvim") },
 
+    -- .NET menu, and C# rename / move through roslyn_ls, also driven from oil.
+    -- Its own repo so it can be shared; set up in init.lua.
+    { src = gh("ClementLegros/dotnet-menu.nvim") },
+
     -- LSP server installer (config itself is native, see config/lsp.lua)
     { src = gh("mason-org/mason.nvim") },
 

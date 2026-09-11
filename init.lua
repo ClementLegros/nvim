@@ -10,7 +10,8 @@ require("config.keymaps")
 require("plugins")
 require("config.lsp")
 
--- Local module (not a vim.pack plugin): lua/dotnet is on the runtimepath
--- already since it lives inside this config. Loaded last so the actions can
--- reach telescope and oil.
-require("dotnet").setup()
+-- dotnet-menu.nvim (github.com/ClementLegros/dotnet-menu.nvim). At startup,
+-- not lazily: its rename waits for a roslyn_ls signal that only a plugin
+-- already set up can see. Also re-pulls roslyn diagnostics on refresh, which
+-- used to live in config/lsp.lua.
+require("dotnet-menu").setup()
