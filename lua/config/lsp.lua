@@ -38,7 +38,17 @@ vim.diagnostic.config({
 -- .bash_profile puts on PATH):
 --     dotnet tool install --global roslyn-language-server --prerelease
 --
--- One addition to that spec: Roslyn resolves package references from
+-- `cmd` is overridden, for two reasons:
+--   * The spec launches `Microsoft.CodeAnalysis.LanguageServer` in preference
+--     to the dotnet tool whenever that name is on PATH. On Windows the server
+--     refused to start with "Option '--logLevel' is required" / "Option
+--     '--extensionLogDirectory' is required" although the dotnet tool was
+--     5.12.0 there too — pointing at another, older binary being picked up.
+--     Naming the tool pins which one runs.
+--   * Both options are passed anyway. 5.12.0 accepts them (checked against its
+--     --help) and earlier builds require them, so this cmd starts either one.
+--
+-- A second addition to that spec: Roslyn resolves package references from
 -- obj/project.assets.json, not from the .csproj, and when that file is missing
 -- or stale it can ask the client to run the restore for it. Neovim ships two
 -- copies of the lspconfig spec — the vim.pack one in site/pack/core/opt wins on
@@ -52,6 +62,14 @@ vim.diagnostic.config({
 -- that do send it (adding a PackageReference to a live session), not a fix for
 -- that case.
 vim.lsp.config("roslyn_ls", {
+    cmd = {
+        "roslyn-language-server",
+        "--logLevel",
+        "Information",
+        "--extensionLogDirectory",
+        vim.fs.joinpath(vim.fn.stdpath("log"), "roslyn"),
+        "--stdio",
+    },
     handlers = {
         ["workspace/_roslyn_projectNeedsRestore"] = function(_, result, ctx)
             local client = assert(vim.lsp.get_client_by_id(ctx.client_id))
