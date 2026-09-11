@@ -1,8 +1,10 @@
 -- C# source operations shared by the menu (actions.lua) and the oil hooks
--- (oil.lua): the body of a new file, and the type a file is named after —
--- finding it, renaming it everywhere, finding who still uses it.
+-- (oil.lua): the body of a new file, the type a file is named after — finding
+-- it, renaming it everywhere, finding who still uses it — and the namespace of
+-- a file that changed folder.
 --
--- The roslyn_ls requests here are SYNCHRONOUS (request_sync). The oil hooks
+-- The roslyn_ls requests here are SYNCHRONOUS (request_sync), except the
+-- namespace sync, which has to poll until roslyn offers it. The oil hooks
 -- have no choice: OilActionsPre is the last moment the server still knows the
 -- file under its old path, and oil moves it the moment the hook returns. The
 -- menu uses the same code for a single, explicit action, where a fraction of a
@@ -103,6 +105,50 @@ local function request(client, bufnr, method, params)
     return response.result, nil
 end
 
+--- Which buffers exist and which hold unsaved work, taken BEFORE an edit: both
+--- decide what happens to a buffer once the edit is applied.
+local function snapshot()
+    local loaded, modified = {}, {}
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        loaded[b] = vim.api.nvim_buf_is_loaded(b)
+        modified[b] = vim.bo[b].modified
+    end
+    return { loaded = loaded, modified = modified }
+end
+
+--- Apply a WorkspaceEdit from roslyn_ls and save what it touched.
+---
+--- Saved, because a refactoring is only real once it is on disk: `dotnet build`
+--- reads files, not buffers. The exception is a buffer that ALREADY had unsaved
+--- changes — writing it would commit work in progress along with the edit, so it
+--- is left to the user and named in the report. `bufnr`, the file the operation
+--- is about, is always saved: it is being moved, and what moves is the disk.
+---
+--- @return integer written, string[] pending
+local function apply_and_save(client, edit, bufnr, before)
+    vim.lsp.util.apply_workspace_edit(edit, client.offset_encoding)
+
+    local written, pending = 0, {}
+    for _, b in ipairs(edited_buffers(edit)) do
+        if b ~= bufnr and before.modified[b] then
+            table.insert(pending, vim.fn.fnamemodify(vim.api.nvim_buf_get_name(b), ":t"))
+        else
+            vim.api.nvim_buf_call(b, function()
+                vim.cmd("silent write")
+            end)
+            written = written + 1
+
+            -- apply_workspace_edit loads every file it edits into a LISTED
+            -- buffer: a widely used type would fill the bufferline with files
+            -- nobody opened. Those go away again; the edit is on disk.
+            if b ~= bufnr and not before.loaded[b] then
+                vim.api.nvim_buf_delete(b, {})
+            end
+        end
+    end
+    return written, pending
+end
+
 --- Where the type named after the file is declared, if there is one.
 --- @return lsp.Position|nil position, string|nil err
 local function locate(client, bufnr, name)
@@ -140,13 +186,7 @@ function M.rename_type(client, bufnr, old, new)
         return { renamed = false, written = 0, pending = {} }
     end
 
-    -- Snapshot BEFORE the edit: which buffers already existed and which held
-    -- unsaved work. Both decide what happens to a buffer afterwards.
-    local loaded, modified = {}, {}
-    for _, b in ipairs(vim.api.nvim_list_bufs()) do
-        loaded[b] = vim.api.nvim_buf_is_loaded(b)
-        modified[b] = vim.bo[b].modified
-    end
+    local before = snapshot()
 
     local edit
     edit, err = request(client, bufnr, "textDocument/rename", {
@@ -164,32 +204,143 @@ function M.rename_type(client, bufnr, old, new)
         return nil, ("roslyn_ls refuse de renommer %s en %s (nom de type C# invalide ?)"):format(old, new)
     end
 
-    vim.lsp.util.apply_workspace_edit(edit, client.offset_encoding)
+    local written, pending = apply_and_save(client, edit, bufnr, before)
+    return { renamed = true, written = written, pending = pending }, nil
+end
 
-    -- Saved, because a rename is only real once every reference is on disk:
-    -- `dotnet build` reads files, not buffers. The exception is a buffer that
-    -- ALREADY had unsaved changes — writing it would commit work in progress
-    -- along with the rename, so it is left to the user and named in the report.
-    local result = { renamed = true, written = 0, pending = {} }
-    for _, b in ipairs(edited_buffers(edit)) do
-        if b ~= bufnr and modified[b] then
-            table.insert(result.pending, vim.fn.fnamemodify(vim.api.nvim_buf_get_name(b), ":t"))
-        else
-            vim.api.nvim_buf_call(b, function()
-                vim.cmd("silent write")
-            end)
-            result.written = result.written + 1
+-- The refactoring roslyn offers on a namespace that does not match the folders,
+-- told apart by its provider tag rather than its title: the title is localised
+-- (a French Windows may not say "Change namespace to"), the tag is an internal
+-- constant. The same provider also offers "Move file to …", which is why the
+-- target namespace, quoted in the title in any language, is matched as well.
+local SYNC_NAMESPACE_PROVIDER = "Sync Namespace and Folder Name Code Action Provider"
 
-            -- apply_workspace_edit loads every file it edits into a LISTED
-            -- buffer: renaming a widely used type would fill the bufferline with
-            -- files nobody opened. Those go away again; the edit is on disk.
-            if b ~= bufnr and not loaded[b] then
-                vim.api.nvim_buf_delete(b, {})
-            end
+-- How long to wait for roslyn to offer it. It needs the project to know the
+-- file's new folder, i.e. a project reload: measured, it appeared ~2s after
+-- the move on ~/Projects/test.
+local SYNC_TIMEOUT_MS = 30000
+local SYNC_POLL_MS = 500
+
+local function pick_sync_action(actions, namespace)
+    for _, action in ipairs(actions) do
+        local tags = vim.tbl_get(action, "data", "CustomTags") or {}
+        if vim.tbl_contains(tags, SYNC_NAMESPACE_PROVIDER) and action.title:find("'" .. namespace .. "'", 1, true) then
+            return action
+        end
+    end
+    return nil
+end
+
+--- @class dotnet.NamespaceResult
+--- @field changed boolean  false: nothing to do (already right, no namespace,
+---                         or a namespace that never followed the folders)
+--- @field kept? string     the hand-chosen namespace that was left alone
+--- @field from? string
+--- @field to? string
+--- @field written? integer
+--- @field pending? string[]
+
+--- After a file moved to another folder: change its namespace to `namespace`,
+--- with roslyn's own refactoring, so every file using its types gets the
+--- matching `using` — measured, moving a class into Models/ added
+--- `using EncoreUnTest.Models;` to Class1.cs, its only caller.
+---
+--- Only when the namespace followed the OLD folder (`previous`): a namespace
+--- that was chosen by hand is left alone rather than forced onto the folders.
+---
+--- Asynchronous: the action is only offered once the server has reloaded the
+--- project, so this polls for it. `cb` gets the result, or nil and a message.
+---
+--- @param cb fun(result: dotnet.NamespaceResult|nil, err: string|nil)
+function M.sync_namespace(client, bufnr, previous, namespace, cb)
+    local symbols, err = request(client, bufnr, "textDocument/documentSymbol", {
+        textDocument = vim.lsp.util.make_text_document_params(bufnr),
+    })
+    if err then
+        return cb(nil, err)
+    end
+
+    local declaration
+    for _, symbol in ipairs(symbols or {}) do
+        if symbol.kind == vim.lsp.protocol.SymbolKind.Namespace then
+            declaration = symbol
+            break
         end
     end
 
-    return result, nil
+    if not declaration or declaration.name == namespace then
+        return cb({ changed = false }, nil)
+    end
+    if declaration.name ~= previous then
+        return cb({ changed = false, kept = declaration.name }, nil)
+    end
+
+    local params = {
+        textDocument = vim.lsp.util.make_text_document_params(bufnr),
+        range = { start = declaration.selectionRange.start, ["end"] = declaration.selectionRange.start },
+        context = { diagnostics = {}, triggerKind = 1 },
+    }
+    local deadline = vim.uv.now() + SYNC_TIMEOUT_MS
+
+    local function attempt()
+        if not vim.api.nvim_buf_is_valid(bufnr) then
+            return cb(nil, "buffer fermé avant la mise à jour du namespace")
+        end
+
+        client:request("textDocument/codeAction", params, function(action_err, actions)
+            local action = not action_err and pick_sync_action(actions or {}, namespace)
+            if not action then
+                if vim.uv.now() < deadline then
+                    vim.defer_fn(attempt, SYNC_POLL_MS)
+                else
+                    cb(nil, ("roslyn_ls n'a pas proposé de passer %s en %s"):format(declaration.name, namespace))
+                end
+                return
+            end
+
+            local resolved, resolve_err = request(client, bufnr, "codeAction/resolve", action)
+            if resolve_err or not (resolved and resolved.edit) then
+                return cb(nil, resolve_err or "roslyn_ls : action sans modification")
+            end
+
+            local written, pending = apply_and_save(client, resolved.edit, bufnr, snapshot())
+            cb({ changed = true, from = declaration.name, to = namespace, written = written, pending = pending }, nil)
+        end, bufnr)
+    end
+
+    attempt()
+end
+
+--- @param result dotnet.NamespaceResult
+function M.report_namespace(file, result)
+    if result.kept then
+        vim.notify(
+            ("%s : namespace %s conservé (il ne suivait pas les dossiers)"):format(file, result.kept),
+            vim.log.levels.INFO,
+            { title = TITLE }
+        )
+    end
+    if not result.changed then
+        return
+    end
+    vim.notify(
+        ("%s : namespace %s → %s (%d fichier%s)"):format(
+            file,
+            result.from,
+            result.to,
+            result.written,
+            result.written > 1 and "s" or ""
+        ),
+        vim.log.levels.INFO,
+        { title = TITLE }
+    )
+    if #result.pending > 0 then
+        vim.notify(
+            "Modifiés mais NON enregistrés (changements en cours) : " .. table.concat(result.pending, ", "),
+            vim.log.levels.WARN,
+            { title = TITLE }
+        )
+    end
 end
 
 --- The files, other than its own, that use the type `name` declared in `bufnr`.

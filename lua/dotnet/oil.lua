@@ -9,6 +9,10 @@
 --                        as the menu's "Renommer" does. oil alone would only
 --                        move the file: roslyn_ls declares willRenameFiles for
 --                        **/*.razor only (measured on 5.12.0).
+--   move    Foo.cs into  the namespace follows the folder, through roslyn's
+--           Models/      own "change namespace" refactoring, which also adds the
+--                        `using` its callers need. Combined with a rename, both
+--                        happen.
 --   delete  Foo.cs       a warning when Foo is still used elsewhere — the next
 --                        build would fail there — and the deleted file's buffer
 --                        is closed, since while it stays open the server keeps
@@ -78,6 +82,11 @@ end
 --- done the operation — or turned into an explanation when it failed.
 local queued = {}
 
+--- Files that changed folder, for the Post hook to fix their namespace. Their
+--- previous namespace is worked out HERE, while the old folder's project can
+--- still be found from it.
+local moved = {}
+
 --- Before a move: rename the type while the server still knows the old path.
 local function before_move(action)
     local src, dest = path_of(action.src_url), path_of(action.dest_url)
@@ -85,10 +94,19 @@ local function before_move(action)
         return
     end
 
-    -- Same name, other folder: there is no type to rename. (The namespace would
-    -- change too, and with it the `using` of every caller — not handled.)
+    local src_dir = vim.fs.dirname(src)
+    if not context.project(src_dir) then
+        return
+    end
+
+    -- Another folder: the namespace follows, but only after the move — roslyn
+    -- offers that refactoring for the file where it IS, not where it will be.
+    if vim.fs.dirname(dest) ~= src_dir then
+        table.insert(moved, { path = dest, previous = context.namespace_for(src_dir) })
+    end
+
     local old, new = stem(src), stem(dest)
-    if old == new or not context.project(vim.fs.dirname(src)) then
+    if old == new then
         return
     end
 
@@ -208,8 +226,44 @@ local function after_create(action)
     return ("%s.cs : %s %s dans %s"):format(name, keyword, name, namespace)
 end
 
+--- Fix the namespace of each moved file, one after the other: each waits for
+--- roslyn to offer the refactoring, and they would otherwise all poll at once.
+local function sync_moved(list)
+    local item = table.remove(list, 1)
+    if not item then
+        return
+    end
+
+    local file = vim.fs.basename(item.path)
+    local namespace = context.namespace_for(vim.fs.dirname(item.path))
+    local client = roslyn.client_for(item.path)
+
+    if not namespace then
+        notify(("%s est hors de tout projet : namespace inchangé"):format(file), vim.log.levels.WARN)
+        return sync_moved(list)
+    end
+    if not client then
+        notify(("roslyn_ls ne tourne pas : namespace de %s non mis à jour"):format(file), vim.log.levels.WARN)
+        return sync_moved(list)
+    end
+
+    local bufnr, temporary = attached_buffer(client, item.path)
+    csharp.sync_namespace(client, bufnr, item.previous, namespace, function(result, err)
+        if temporary then
+            pcall(vim.api.nvim_buf_delete, bufnr, {})
+        end
+        if result then
+            csharp.report_namespace(file, result)
+        else
+            notify(err, vim.log.levels.ERROR)
+        end
+        sync_moved(list)
+    end)
+end
+
 local function on_pre(actions)
     queued = {}
+    moved = {}
     for _, action in ipairs(actions) do
         if action.entry_type == "file" then
             if action.type == "move" then
@@ -254,6 +308,10 @@ local function on_post(err, actions)
     if #created > 0 then
         notify(table.concat(created, "\n"), vim.log.levels.INFO)
     end
+
+    local list = moved
+    moved = {}
+    sync_moved(list)
 end
 
 --- A failure in a hook must not become a failure of the oil save itself: the

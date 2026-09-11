@@ -28,7 +28,7 @@ lua/dotnet/                  Menu .NET (module local, pas un plugin vim.pack)
   project.lua                Graphe des références projet-à-projet
   templates.lua              Catalogue `dotnet new`
   roslyn.lua                 Attente du chargement de la solution par roslyn_ls
-  csharp.lua                 Squelette de fichier, renommage de type (partagés)
+  csharp.lua                 Squelette, renommage de type, namespace (partagés)
   actions.lua                Les sept actions du menu
   oil.lua                    Les mêmes actions, déclenchées depuis oil
 ```
@@ -86,7 +86,7 @@ Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
 | `p` | Nouveau projet — 7 templates courants + le catalogue complet |
 | `a` | Ajouter au `.sln` les projets présents sur disque mais absents |
 | `f` | Nouveau fichier — class / interface / record / enum / struct |
-| `R` | Renommer le fichier `.cs` courant — et le type qu'il déclare, partout |
+| `R` | Renommer / déplacer le fichier `.cs` courant — type et namespace suivent, partout |
 | `r` | Référence projet-à-projet |
 | `n` | Package NuGet (recherche sur nuget.org) |
 
@@ -107,13 +107,24 @@ Deux endroits font mieux que la CLI, délibérément :
   Le menu n'affiche que les projets qui ne peuvent pas déjà atteindre la source,
   transitivement.
 
-### Renommer un fichier
+### Renommer / déplacer un fichier
 
 roslyn_ls ne réagit aux renommages de fichiers que pour les `*.razor` : un
 simple déplacement de `Foo.cs` laisserait la classe, et tout ce qui l'utilise,
-sous l'ancien nom. Le renommage (menu `R` ou oil) renomme donc d'abord le
-**type** via roslyn_ls (`textDocument/rename`, sur toute la solution),
-enregistre les fichiers modifiés, puis le fichier.
+sous l'ancien nom et l'ancien namespace. Le menu `R` (qui accepte un nom ou un
+chemin relatif au fichier : `Bar`, `Models/Bar`, `../Services/Bar`) et oil
+passent donc par roslyn_ls :
+
+1. **Nom changé** : le type est renommé (`textDocument/rename`, toute la
+   solution) tant que le fichier est encore à son ancien chemin.
+2. Le fichier est déplacé.
+3. **Dossier changé** : le namespace suit, via la refactorisation « Change
+   namespace » de roslyn, qui ajoute aussi les `using` nécessaires — chez les
+   appelants, et dans le fichier déplacé s'il utilisait des voisins de son
+   ancien dossier. Proposée seulement une fois le projet rechargé (~2 s) : elle
+   est attendue en tâche de fond.
+
+Les fichiers modifiés sont enregistrés.
 
 - **Attente du chargement.** Avant d'avoir chargé la solution, roslyn_ls répond
   quand même, mais avec le seul fichier courant — sans erreur (mesuré). Le
@@ -122,8 +133,8 @@ enregistre les fichiers modifiés, puis le fichier.
   le fichier est renommé, et le message le dit.
 - **Buffer avec des modifications en cours** : le renommage y est appliqué mais
   le buffer n'est pas enregistré — il est nommé dans un avertissement.
-- **Un nom, pas un chemin.** Déplacer le fichier changerait son namespace, et
-  donc les `using` des fichiers qui l'utilisent : ce n'est pas géré.
+- **Namespace choisi à la main** : il n'est changé que s'il suivait l'ancien
+  dossier. Sinon il est conservé, et le message le dit.
 
 ### Depuis oil, sans le menu
 
@@ -136,12 +147,13 @@ solution — aucun serveur n'est démarré pour l'occasion :
 |----------|-------|
 | Créer `Invoice.cs` | Fichier vide rempli : namespace des dossiers + `public class Invoice` (`interface` pour `IInvoice…`) |
 | Renommer `Foo.cs` → `Bar.cs` | Type `Foo` renommé en `Bar` dans toute la solution, avant qu'oil ne déplace le fichier |
+| Déplacer `Foo.cs` (couper / coller) dans `Models/` | Namespace → `…Models`, `using` ajoutés où il faut |
 | Supprimer `Foo.cs` | Avertissement si `Foo` est encore utilisé ailleurs ; le buffer du fichier supprimé est fermé |
 
 Branché sur les événements `OilActionsPre` / `OilActionsPost`. Un `.cs` hors de
 tout projet (ou un nom qui n'est pas un identifiant, `Invoice.Validation.cs`)
-est laissé tel quel. Déplacer un fichier dans un autre dossier sous le même nom
-ne touche à rien.
+est laissé tel quel. Déplacer un **dossier** entier ne met pas à jour les
+namespaces des fichiers qu'il contient.
 
 Après chaque action, les buffers oil concernés sont réaffichés et les fichiers
 modifiés rechargés (`:checktime <bufnr>`, la forme globale ne touchant pas les

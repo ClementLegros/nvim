@@ -26,7 +26,7 @@ function M.open()
             { key = "p", label = "Nouveau projet", handler = actions.new_project },
             { key = "a", label = "Ajouter au .sln", handler = actions.add_projects },
             { key = "f", label = "Nouveau fichier", handler = actions.new_file },
-            { key = "R", label = "Renommer le fichier", handler = actions.rename_file },
+            { key = "R", label = "Renommer / déplacer le fichier", handler = actions.rename_file },
             { key = "r", label = "Référence projet", handler = actions.add_reference },
             { key = "n", label = "Package NuGet", handler = actions.add_package },
             { separator = true },

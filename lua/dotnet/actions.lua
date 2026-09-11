@@ -503,6 +503,11 @@ function M.new_file()
     menu.open({ title = "Nouveau fichier", items = items })
 end
 
+--- "Invoice" for .../Invoice.cs
+local function stem(path)
+    return (vim.fs.basename(path):gsub("%.cs$", ""))
+end
+
 --- Rename the file on disk, keeping its buffer (and the LSP's view of it).
 ---
 --- vim.lsp.util.rename does the delicate part: it moves the file, re-points
@@ -525,27 +530,65 @@ local function move_file(path, new_path)
     return true
 end
 
---- Rename the type through roslyn_ls, save what it edited, then the file.
+--- Rename the type through roslyn_ls, save what it edited, move the file, and
+--- when it changed folder, let the namespace follow.
 ---
---- The TYPE goes first, while the file still has its old name: the rename
---- request is addressed to the document's URI, and moving the file first would
---- mean asking the server about a path it has not caught up with yet.
-local function rename_type_and_file(client, bufnr, path, new_path, old, new)
-    local result, err = csharp.rename_type(client, bufnr, old, new)
-    if not result then
-        vim.notify(err, vim.log.levels.ERROR, { title = ".NET" })
+--- The TYPE goes first, while the file still has its old path: the rename
+--- request is addressed to the document's URI. The NAMESPACE goes last: roslyn
+--- only offers that refactoring once the file sits in its new folder.
+local function rename_and_move(client, bufnr, path, new_path)
+    local old, new = stem(path), stem(new_path)
+    local dir, new_dir = vim.fs.dirname(path), vim.fs.dirname(new_path)
+
+    local result = { renamed = false, written = 0, pending = {} }
+    if new ~= old then
+        local err
+        result, err = csharp.rename_type(client, bufnr, old, new)
+        if not result then
+            vim.notify(err, vim.log.levels.ERROR, { title = ".NET" })
+            return
+        end
+    end
+
+    -- Worked out before the move, while the old folder is where the file is.
+    local previous = context.namespace_for(dir)
+
+    if not move_file(path, new_path) then
         return
     end
 
-    if move_file(path, new_path) then
+    if new ~= old then
         csharp.report_rename(old, new, result)
     end
+    if new_dir == dir then
+        return
+    end
+
+    vim.notify(
+        ("%s.cs déplacé dans %s"):format(new, vim.fn.fnamemodify(new_dir, ":~:.")),
+        vim.log.levels.INFO,
+        { title = ".NET" }
+    )
+
+    local namespace = context.namespace_for(new_dir)
+    if not namespace then
+        vim.notify("Hors de tout projet : namespace inchangé", vim.log.levels.WARN, { title = ".NET" })
+        return
+    end
+
+    -- vim.lsp.util.rename kept the buffer number (`:saveas`), so `bufnr` is now
+    -- the file at its new path.
+    csharp.sync_namespace(client, bufnr, previous, namespace, function(ns_result, err)
+        if ns_result then
+            csharp.report_namespace(vim.fs.basename(new_path), ns_result)
+        else
+            vim.notify(err, vim.log.levels.ERROR, { title = ".NET" })
+        end
+    end)
 end
 
---- Rename a C# file, and the type named after it everywhere it is used.
----
---- The menu counterpart of renaming the file in oil (see oil.lua): both go
---- through the server's own rename, which covers the whole solution.
+--- Rename and/or move a C# file, and the type named after it everywhere it is
+--- used — the menu counterpart of doing it in oil (see oil.lua).
 function M.rename_file()
     local path = context.current_file()
     if not path or not path:match("%.cs$") then
@@ -557,36 +600,36 @@ function M.rename_file()
         return
     end
 
-    local old = vim.fs.basename(path):gsub("%.cs$", "")
+    local old = stem(path)
     local dir = vim.fs.dirname(path)
 
-    vim.ui.input({ prompt = ("Renommer %s.cs en : "):format(old), default = old }, function(input)
+    vim.ui.input({ prompt = ("Renommer / déplacer %s.cs vers : "):format(old), default = old }, function(input)
         if not input then
             return
         end
 
-        local new = vim.trim(input):gsub("%.cs$", "")
-        if new == "" or new == old then
+        -- A name renames in place; a path moves too, relative to the file's own
+        -- folder like the other prompts: "Models/Foo", "../Services/Foo".
+        local target = vim.trim(input):gsub("%.cs$", "")
+        if target == "" then
             return
         end
-
-        -- A name only. Moving to another folder would also change the
-        -- namespace, and with it the `using` of every file that refers to the
-        -- type — a different operation from this one.
-        if new:find("[/\\]") then
-            vim.notify(
-                "Un nom, pas un chemin : le renommage ne déplace pas le fichier",
-                vim.log.levels.ERROR,
-                { title = ".NET" }
-            )
+        if vim.fn.isabsolutepath(target) == 0 then
+            target = vim.fs.joinpath(dir, target)
+        end
+        local new_path = vim.fs.normalize(target .. ".cs")
+        if new_path == path then
             return
         end
 
         -- Checked before anything is touched: finding the clash after the type
         -- rename would leave the code renamed and the file not.
-        local new_path = vim.fs.joinpath(dir, new .. ".cs")
         if vim.uv.fs_stat(new_path) then
-            vim.notify(new .. ".cs existe déjà", vim.log.levels.ERROR, { title = ".NET" })
+            vim.notify(
+                vim.fn.fnamemodify(new_path, ":~:.") .. " existe déjà",
+                vim.log.levels.ERROR,
+                { title = ".NET" }
+            )
             return
         end
 
@@ -601,7 +644,7 @@ function M.rename_file()
             end
 
             roslyn.when_ready(bufnr, function(client)
-                rename_type_and_file(client, bufnr, path, new_path, old, new)
+                rename_and_move(client, bufnr, path, new_path)
             end)
         end)
     end)
