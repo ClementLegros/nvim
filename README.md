@@ -19,6 +19,15 @@ lua/plugins/
   editor.lua                 oil, telescope, nvim-window, lazygit
   mason.lua                  installation des serveurs LSP
   completion.lua             blink.cmp
+lua/dotnet/                  Menu .NET (module local, pas un plugin vim.pack)
+  init.lua                   Entrées du menu, :Dotnet, <leader>n
+  menu.lua                   La fenêtre flottante générique
+  cli.lua                    Exécution asynchrone de `dotnet`
+  context.lua                Où suis-je : solution, projet, namespace
+  solution.lua               Ce que la solution contient (dotnet sln list)
+  project.lua                Graphe des références projet-à-projet
+  templates.lua              Catalogue `dotnet new`
+  actions.lua                Les six actions du menu
 ```
 
 ## Gestion des plugins
@@ -58,6 +67,41 @@ for this buffer » au lieu de retomber silencieusement sur le `gd` de Vim.
 Diagnostic utile : `:checkhealth vim.lsp`.
 
 Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
+
+## Menu .NET
+
+`<leader>n` (ou `:Dotnet`) ouvre un menu flottant :
+
+| Touche | Action |
+|--------|--------|
+| `s` | Nouvelle solution (`.slnx` par défaut, `.sln` au choix) |
+| `p` | Nouveau projet — 7 templates courants + le catalogue complet |
+| `a` | Ajouter au `.sln` les projets présents sur disque mais absents |
+| `f` | Nouveau fichier — class / interface / record / enum / struct |
+| `r` | Référence projet-à-projet |
+| `n` | Package NuGet (recherche sur nuget.org) |
+
+Tout passe par la CLI `dotnet` : pas de serveur, pas de démon, pas d'analyse
+MSBuild. Les champs de saisie acceptent un **chemin** et pas seulement un nom —
+`src/Api` crée le projet `Api` sous `src/`, `Services/Billing/Invoice` crée les
+dossiers et y place `Invoice.cs`.
+
+Deux endroits font mieux que la CLI, délibérément :
+
+- **Le namespace.** `dotnet new class` écrit `namespace <RacineDuProjet>;` en
+  ignorant les dossiers, sans option pour corriger, et avec un BOM. Le fichier
+  est donc écrit directement, avec le namespace dérivé de l'arborescence
+  (vérifié : 81 des 82 fichiers d'ApiConverter, le dernier étant `Program.cs`).
+- **Les cycles de références.** `dotnet add reference` accepte une référence
+  circulaire sans broncher (exit 0) et le build casse ensuite avec `MSB4006`.
+  Le menu n'affiche que les projets qui ne peuvent pas déjà atteindre la source,
+  transitivement.
+
+Après chaque action, les buffers oil concernés sont réaffichés et les fichiers
+modifiés rechargés (`:checktime <bufnr>`, la forme globale ne touchant pas les
+buffers cachés).
+
+Dépendance externe : le SDK `dotnet` sur le PATH.
 
 ## Migration
 

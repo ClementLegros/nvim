@@ -9,3 +9,8 @@ require("config.options")
 require("config.keymaps")
 require("plugins")
 require("config.lsp")
+
+-- Local module (not a vim.pack plugin): lua/dotnet is on the runtimepath
+-- already since it lives inside this config. Loaded last so the actions can
+-- reach telescope and oil.
+require("dotnet").setup()
