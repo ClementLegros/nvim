@@ -64,6 +64,11 @@ inconditionnellement — comme les défauts de Neovim (`grn`/`gra`/`grr`). Dans 
 buffer sans serveur, `gd` affiche donc « not supported by any server activated
 for this buffer » au lieu de retomber silencieusement sur le `gd` de Vim.
 
+roslyn_ls : quand un fichier est ajouté au projet (création, renommage), les
+buffers déjà ouverts gardaient des erreurs CS0246 jusqu'à un `:e`. Neovim ne
+redemandait que les diagnostics « workspace » ; `lua/config/lsp.lua` redemande
+aussi ceux de chaque document ouvert à chaque `workspace/diagnostic/refresh`.
+
 Diagnostic utile : `:checkhealth vim.lsp`.
 
 Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
