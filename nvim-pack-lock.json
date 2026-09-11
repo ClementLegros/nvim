@@ -14,7 +14,7 @@
       "src": "https://github.com/catppuccin/nvim"
     },
     "dotnet-menu.nvim": {
-      "rev": "539bcc818b9b605a526cb5565674da8eec25b6bd",
+      "rev": "6dc37648cb5461f8af1a9eaafc437b00c97e0301",
       "src": "https://github.com/ClementLegros/dotnet-menu.nvim"
     },
     "friendly-snippets": {
