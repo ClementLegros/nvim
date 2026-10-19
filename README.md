@@ -19,6 +19,7 @@ lua/plugins/
   editor.lua                 oil, telescope, nvim-window, lazygit
   mason.lua                  installation des serveurs LSP
   completion.lua             blink.cmp
+  dotnet.lua                 easy-dotnet + nvim-dap + nvim-dap-ui (run / debug / tests .NET)
 ```
 
 ## Gestion des plugins
@@ -61,7 +62,7 @@ Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
 
 ## Menu .NET
 
-Le menu .NET (`<leader>n`, `:Dotnet`), le renommage / déplacement de fichiers
+Le menu .NET (`<leader>n`), le renommage / déplacement de fichiers
 C# via roslyn_ls et les actions déclenchées depuis oil sont dans leur propre
 dépôt, pour pouvoir être partagés :
 [dotnet-menu.nvim](https://github.com/ClementLegros/dotnet-menu.nvim).
@@ -69,6 +70,67 @@ dépôt, pour pouvoir être partagés :
 Installé par `vim.pack` (`lua/plugins/init.lua`), initialisé dans `init.lua`.
 Il corrige aussi les erreurs CS0246 qui restaient affichées jusqu'à un `:e`
 après l'ajout d'un fichier au projet (option `roslyn_diagnostics`).
+
+La commande `:Dotnet` appartient à easy-dotnet (voir ci-dessous) : les deux
+plugins la définissent et le dernier `setup()` l'emporte. C'est pour ça que
+`plugins.dotnet` est chargé après dotnet-menu dans `init.lua`.
+
+## Debug .NET
+
+`lua/plugins/dotnet.lua` : [easy-dotnet.nvim](https://github.com/GustavEikaas/easy-dotnet.nvim)
+(build / run avec les launch profiles, debug, test runner) +
+[nvim-dap](https://github.com/mfussenegger/nvim-dap) +
+[nvim-dap-ui](https://github.com/rcarriga/nvim-dap-ui).
+
+Dépendance externe : le serveur EasyDotnet, qui fournit aussi netcoredbg
+(mason n'a donc pas besoin de l'installer) :
+
+```sh
+dotnet tool install -g EasyDotnet
+```
+
+L'interface dap-ui s'ouvre au démarrage d'une session et se ferme à la fin.
+
+### Raccourcis (façon Visual Studio)
+
+| Touche | Action |
+| --- | --- |
+| `<F5>` | Démarrer le debug du projet par défaut / continuer si une session tourne |
+| `<C-F5>` | Lancer sans debugger |
+| `<S-F5>` | Arrêter le debug |
+| `<F9>` | Basculer un breakpoint |
+| `<F10>` | Step over |
+| `<F11>` | Step into |
+| `<S-F11>` | Step out |
+
+Au premier `<F5>`, easy-dotnet demande quel projet utiliser par défaut et le
+mémorise. Selon le terminal, les F-keys avec Shift / Ctrl arrivent en `<F17>` /
+`<F23>` / `<F29>` : elles sont mappées aussi.
+
+### Raccourcis hors F-keys
+
+| Touche | Action |
+| --- | --- |
+| `<leader>b` | Basculer un breakpoint |
+| `<leader>B` | Breakpoint conditionnel (demande la condition) |
+| `<leader>u` | Afficher / masquer l'interface dap-ui |
+| `<leader>k` | Évaluer l'expression sous le curseur (ou la sélection) |
+
+Pas de famille `<leader>d…` : `<leader>d` ouvre le float de diagnostic.
+
+### Tests
+
+| Touche | Action |
+| --- | --- |
+| `<leader>To` | Ouvrir / fermer le test runner |
+| `<leader>Tr` | Lancer le test sous le curseur |
+| `<leader>Td` | Debugger le test sous le curseur |
+| `<leader>Ta` | Lancer tous les tests du fichier |
+| `<leader>Tp` | Afficher la sortie du test |
+
+Les maps `<leader>T…` (sauf `<leader>To`) ne sont définies que dans les fichiers
+qui contiennent des tests. Dans la fenêtre du test runner, ce sont les
+raccourcis par défaut d'easy-dotnet.
 
 ## Migration
 
