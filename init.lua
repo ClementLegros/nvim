@@ -4,6 +4,7 @@
 --   2. general keymaps
 --   3. plugins  (vim.pack.add + each plugin's setup)
 --   4. native LSP (needs mason from the plugins step to be on runtimepath)
+--   5. dotnet-menu, then easy-dotnet + nvim-dap (both define :Dotnet, see below)
 
 require("config.options")
 require("config.keymaps")
@@ -15,3 +16,7 @@ require("config.lsp")
 -- already set up can see. Also re-pulls roslyn diagnostics on refresh, which
 -- used to live in config/lsp.lua.
 require("dotnet-menu").setup()
+
+-- easy-dotnet + nvim-dap. AFTER dotnet-menu: both define :Dotnet and the last
+-- setup wins — easy-dotnet must own it (see plugins/dotnet.lua).
+require("plugins.dotnet")

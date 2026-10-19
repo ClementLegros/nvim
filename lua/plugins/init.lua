@@ -38,6 +38,13 @@ vim.pack.add({
     -- Its own repo so it can be shared; set up in init.lua.
     { src = gh("ClementLegros/dotnet-menu.nvim") },
 
+    -- .NET run / debug / test runner, next to dotnet-menu. Set up in init.lua,
+    -- after dotnet-menu — see plugins/dotnet.lua for why the order matters.
+    { src = gh("GustavEikaas/easy-dotnet.nvim") },
+    { src = gh("mfussenegger/nvim-dap") },
+    { src = gh("nvim-neotest/nvim-nio") }, -- required by nvim-dap-ui
+    { src = gh("rcarriga/nvim-dap-ui") },
+
     -- LSP server installer (config itself is native, see config/lsp.lua)
     { src = gh("mason-org/mason.nvim") },
 
