@@ -80,25 +80,13 @@ vim.fn.sign_define("DapStopped", { text = "▶", texthl = "DiagnosticOk", linehl
 --
 -- F5 starts the persisted default project with its launch profile, like VS;
 -- the first time, easy-dotnet asks which project that is. With a session
--- already running it continues instead. In a PowerShell buffer it debugs the
--- current script instead, through the `ps1` adapter of powershell.nvim (see
--- plugins/powershell.lua) — the stepping keys below are plain nvim-dap and
--- serve both.
+-- already running it continues instead.
 --
 -- Shifted / Ctrl'd F-keys are mapped twice: depending on the terminal they
 -- arrive as <S-F5> or as <F17> (F5 + 12), <C-F5> or <F29> (F5 + 24).
 map("n", "<F5>", function()
     if dap.session() then
         dap.continue()
-    elseif vim.bo.filetype == "ps1" then
-        -- Not dap.continue(): that would ask which of powershell.nvim's three
-        -- configurations to use on every start.
-        dap.run({
-            name = "PowerShell: Launch Current File",
-            type = "ps1",
-            request = "launch",
-            script = "${file}",
-        })
     else
         require("easy-dotnet").debug_default()
     end

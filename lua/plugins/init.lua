@@ -45,10 +45,6 @@ vim.pack.add({
     { src = gh("nvim-neotest/nvim-nio") }, -- required by nvim-dap-ui
     { src = gh("rcarriga/nvim-dap-ui") },
 
-    -- PowerShell: LSP, REPL terminal and debug adapter, all from
-    -- PowerShellEditorServices. Set up in init.lua, see plugins/powershell.lua.
-    { src = gh("TheLeoP/powershell.nvim") },
-
     -- LSP server installer (config itself is native, see config/lsp.lua)
     { src = gh("mason-org/mason.nvim") },
 

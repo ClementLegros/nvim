@@ -20,7 +20,6 @@ lua/plugins/
   mason.lua                  installation des serveurs LSP
   completion.lua             blink.cmp
   dotnet.lua                 easy-dotnet + nvim-dap + nvim-dap-ui (run / debug / tests .NET)
-  powershell.lua             powershell.nvim (LSP, terminal et debug PowerShell)
 ```
 
 ## Gestion des plugins
@@ -58,9 +57,6 @@ buffer sans serveur, `gd` affiche donc « not supported by any server activated
 for this buffer » au lieu de retomber silencieusement sur le `gd` de Vim.
 
 Diagnostic utile : `:checkhealth vim.lsp`.
-
-PowerShell fait exception : son serveur (`powershell_es`) est démarré par
-powershell.nvim et non par `vim.lsp.enable()` — voir [PowerShell](#powershell).
 
 Dépendances externes : `lazygit` (pour `<leader>gg`), un Nerd Font, `git`.
 
@@ -140,32 +136,3 @@ raccourcis par défaut d'easy-dotnet.
 
 Ancienne config lazy.nvim conservée dans l'historique git. Le dossier
 `~/.local/share/nvim/lazy` (plugins lazy.nvim) peut être supprimé manuellement.
-
-## PowerShell
-
-`lua/plugins/powershell.lua` : [powershell.nvim](https://github.com/TheLeoP/powershell.nvim)
-au-dessus de PowerShellEditorServices (PSES). Un seul serveur fournit le LSP
-(complétion, diagnostics PSScriptAnalyzer, formatage avec `<leader>f`), un
-terminal PowerShell qui partage la session du serveur, et l'adaptateur de debug
-pour nvim-dap.
-
-PSES est installé par mason (`powershell-editor-services`). Dépendance externe :
-PowerShell lui-même (`pwsh`), que mason n'installe pas :
-
-```sh
-dotnet tool install --global PowerShell   # ou powershell-bin (AUR)
-```
-
-Sans `pwsh` (ni `powershell` sous Windows), un avertissement s'affiche à
-l'ouverture du premier `.ps1` et rien n'est démarré.
-
-| Touche | Action (buffers `ps1` uniquement) |
-| --- | --- |
-| `<leader>pt` | Ouvrir / fermer le terminal PowerShell |
-| `<leader>pe` + mouvement | Exécuter le texte couvert dans le terminal (aussi en mode visuel) |
-| `<leader>pee` | Exécuter la ligne courante |
-| `<leader>pd` | Ouvrir / fermer le terminal de debug (entrées / sorties du script débogué) |
-| `<F5>` | Déboguer le script courant / continuer |
-
-Les autres touches de debug (`<F9>`, `<F10>`, `<F11>`, `<S-F5>`…) sont celles de
-la section .NET.

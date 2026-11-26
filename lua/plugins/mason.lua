@@ -27,9 +27,6 @@ local ensure_installed = {
     "json-lsp", -- jsonls
     "tailwindcss-language-server", -- tailwindcss
     "intelephense", -- intelephense
-    -- Not enabled in config/lsp.lua: started by powershell.nvim, which also
-    -- uses it as debug adapter. See plugins/powershell.lua.
-    "powershell-editor-services", -- powershell_es
 }
 
 -- Runs asynchronously after the registry refreshes. A wrong package name is
