@@ -1,5 +1,10 @@
--- Inline diagnostics
-require("tiny-inline-diagnostic").setup()
+-- Inline diagnostics. By default only the cursor line shows its message;
+-- multilines.always_show displays every diagnostic at the end of its line.
+require("tiny-inline-diagnostic").setup({
+    options = {
+        multilines = { enabled = true, always_show = true },
+    },
+})
 
 -- Bufferline
 require("bufferline").setup({
